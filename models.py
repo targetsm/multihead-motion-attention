@@ -100,15 +100,23 @@ class DummyModel(BaseModel):
 
 class AttModel(BaseModel):
 
-    def __init__(self, config, in_features=48, kernel_size=5, d_model=512, num_stage=2, dct_n=10):
+    def __init__(self, config):
         super(AttModel, self).__init__(config)
+
+        print(config)
+        # __init__ arguments in the original attention model
+        in_features = 135  # 48
+        kernel_size = 10
+        d_model = 16  # 512
+        num_stage = 2
+        dct_n = 10
 
         self.kernel_size = kernel_size
         self.d_model = d_model
         # self.seq_in = seq_in
         self.dct_n = dct_n
         # ks = int((kernel_size + 1) / 2)
-        #assert kernel_size == 10
+        # assert kernel_size == 10  # what is the purpose of this line?
 
         self.convQ = nn.Sequential(nn.Conv1d(in_channels=in_features, out_channels=d_model, kernel_size=6,
                                              bias=False),
@@ -131,9 +139,20 @@ class AttModel(BaseModel):
     def create_model(self):
         pass
 
-    def forward(self, src, output_n=25, input_n=50, itera=1):
+    def forward(self, batch: AMASSBatch):
+        """
+        The forward pass.
+        :param batch: Current batch of data.
+        :return: Each forward pass must return a dictionary with keys {'seed', 'predictions'}.
         """
 
+        model_out = {'seed': batch.poses[:, :self.config.seed_seq_len],
+                     'predictions': None}
+        batch_size = batch.batch_size
+        #model_in = batch.poses[:, self.config.seed_seq_len - self.n_history:self.config.seed_seq_len]
+        model_in = batch.poses
+        # old forward docstring and variables
+        """
         :param src: [batch_size,seq_len,feat_dim]
         :param output_n:
         :param input_n:
@@ -142,7 +161,11 @@ class AttModel(BaseModel):
         :param itera:
         :return:
         """
-        print(src.poses.shape)
+        src = model_in
+        output_n = 25
+        input_n = 50
+        itera = 1
+
         dct_n = self.dct_n
         src = src[:, :input_n]  # [bs,in_n,dim]
         src_tmp = src.clone()
@@ -206,7 +229,32 @@ class AttModel(BaseModel):
                 src_query_tmp = src_tmp[:, -self.kernel_size:].transpose(1, 2)
 
         outputs = torch.cat(outputs, dim=2)
-        return outputs
+        print(outputs.shape)
+        #return outputs
+
+        #pred = self.dense(model_in.reshape(batch_size, -1))
+        model_out['predictions'] = outputs
+        #model_out['predictions'] = pred.reshape(batch_size, self.config.target_seq_len, -1)
+        return model_out
 
     def backward(self, batch: AMASSBatch, model_out):
-        pass
+        """
+        The backward pass.
+        :param batch: The same batch of data that was passed into the forward pass.
+        :param model_out: Whatever the forward pass returned.
+        :return: The loss values for book-keeping, as well as the targets for convenience.
+        """
+        predictions = model_out['predictions']
+        targets = batch.poses[:, self.config.seed_seq_len:]
+
+        total_loss = mse(predictions, targets)
+
+        # If you have more than just one loss, just add them to this dict and they will automatically be logged.
+        loss_vals = {'total_loss': total_loss.cpu().item()}
+
+        if self.training:
+            # We only want to do backpropagation in training mode, as this function might also be called when evaluating
+            # the model on the validation set.
+            total_loss.backward()
+
+        return loss_vals, targets
