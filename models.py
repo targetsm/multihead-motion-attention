@@ -107,7 +107,7 @@ class AttModel(BaseModel):
         # __init__ arguments in the original attention model
         in_features = 135  # 48
         kernel_size = 10
-        d_model = 16  # 512
+        d_model = 512
         num_stage = 2
         dct_n = 10
 
