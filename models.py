@@ -233,8 +233,9 @@ class AttModel(BaseModel):
         #return outputs
 
         #pred = self.dense(model_in.reshape(batch_size, -1))
-        model_out['predictions'] = outputs
-        #model_out['predictions'] = pred.reshape(batch_size, self.config.target_seq_len, -1)
+        model_out['predictions'] = outputs.squeeze()
+        #model_out['predictions'] = outputs.reshape(batch_size, self.config.target_seq_len, -1)
+        print(model_out['predictions'].shape)
         return model_out
 
     def backward(self, batch: AMASSBatch, model_out):
@@ -245,8 +246,8 @@ class AttModel(BaseModel):
         :return: The loss values for book-keeping, as well as the targets for convenience.
         """
         predictions = model_out['predictions']
-        targets = batch.poses[:, self.config.seed_seq_len:]
-
+        targets = batch.poses[:, -35:]
+        print(targets.shape)
         total_loss = mse(predictions, targets)
 
         # If you have more than just one loss, just add them to this dict and they will automatically be logged.
