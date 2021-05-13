@@ -109,7 +109,7 @@ class AttModel(BaseModel):
         kernel_size = 10
         d_model = 512
         num_stage = 2
-        dct_n = 10
+        dct_n = 35
 
         self.kernel_size = kernel_size
         self.d_model = d_model
@@ -229,13 +229,13 @@ class AttModel(BaseModel):
                 src_query_tmp = src_tmp[:, -self.kernel_size:].transpose(1, 2)
 
         outputs = torch.cat(outputs, dim=2)
-        print(outputs.shape)
+        #print(outputs.shape)
         #return outputs
 
         #pred = self.dense(model_in.reshape(batch_size, -1))
         model_out['predictions'] = outputs.squeeze()
         #model_out['predictions'] = outputs.reshape(batch_size, self.config.target_seq_len, -1)
-        print(model_out['predictions'].shape)
+        #print(model_out['predictions'].shape)
         return model_out
 
     def backward(self, batch: AMASSBatch, model_out):
@@ -247,7 +247,7 @@ class AttModel(BaseModel):
         """
         predictions = model_out['predictions']
         targets = batch.poses[:, -35:]
-        print(targets.shape)
+        #print(targets.shape)
         total_loss = mse(predictions, targets)
 
         # If you have more than just one loss, just add them to this dict and they will automatically be logged.
