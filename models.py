@@ -109,7 +109,7 @@ class AttModel(BaseModel):
         kernel_size = 10
         d_model = 512
         num_stage = 2
-        dct_n = 35
+        dct_n = 34
 
         self.kernel_size = kernel_size
         self.d_model = d_model
@@ -162,8 +162,8 @@ class AttModel(BaseModel):
         :return:
         """
         src = model_in
-        output_n = 25
-        input_n = 50
+        output_n = 24
+        input_n = 120
         itera = 1
 
         dct_n = self.dct_n
@@ -233,8 +233,9 @@ class AttModel(BaseModel):
         #return outputs
 
         #pred = self.dense(model_in.reshape(batch_size, -1))
-        model_out['predictions'] = outputs.squeeze()
-        #model_out['predictions'] = outputs.reshape(batch_size, self.config.target_seq_len, -1)
+        out_sq = outputs.squeeze()
+        out_sq = out_sq[:, -24:, :]
+        model_out['predictions'] = out_sq.reshape(batch_size, self.config.target_seq_len, -1)
         #print(model_out['predictions'].shape)
         return model_out
 
@@ -246,7 +247,7 @@ class AttModel(BaseModel):
         :return: The loss values for book-keeping, as well as the targets for convenience.
         """
         predictions = model_out['predictions']
-        targets = batch.poses[:, -35:]
+        targets = batch.poses[:, -24:]
         #print(targets.shape)
         total_loss = mse(predictions, targets)
 
