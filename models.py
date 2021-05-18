@@ -104,19 +104,15 @@ class AttModel(BaseModel):
         super(AttModel, self).__init__(config)
 
         print(config)
-        # __init__ arguments in the original attention model
-        in_features = 135  # 48
-        kernel_size = 10 # M
+        in_features = 135
+        kernel_size = 10  # M
         d_model = 512
         num_stage = 2
         dct_n = 34
 
         self.kernel_size = kernel_size
         self.d_model = d_model
-        # self.seq_in = seq_in
         self.dct_n = dct_n
-        # ks = int((kernel_size + 1) / 2)
-        # assert kernel_size == 10  # what is the purpose of this line?
 
         self.convQ = nn.Sequential(nn.Conv1d(in_channels=in_features, out_channels=d_model, kernel_size=6,
                                              bias=False),
@@ -149,19 +145,7 @@ class AttModel(BaseModel):
         model_out = {'seed': batch.poses[:, :self.config.seed_seq_len],
                      'predictions': None}
         batch_size = batch.batch_size
-        #model_in = batch.poses[:, self.config.seed_seq_len - self.n_history:self.config.seed_seq_len]
-        model_in = batch.poses
-        # old forward docstring and variables
-        """
-        :param src: [batch_size,seq_len,feat_dim]
-        :param output_n:
-        :param input_n:
-        :param frame_n:
-        :param dct_n:
-        :param itera:
-        :return:
-        """
-        src = model_in
+        src = batch.poses
         output_n = 24  # number of output frames T
         input_n = 120  # number of input frames N
         itera = 1
@@ -233,14 +217,10 @@ class AttModel(BaseModel):
                 src_query_tmp = src_tmp[:, -self.kernel_size:].transpose(1, 2)
 
         outputs = torch.cat(outputs, dim=2)
-        #print(outputs.shape)
-        #return outputs
 
-        #pred = self.dense(model_in.reshape(batch_size, -1))
         out_sq = outputs.squeeze()
         out_sq = out_sq[:, -24:, :]
         model_out['predictions'] = out_sq.reshape(batch_size, self.config.target_seq_len, -1)
-        #print(model_out['predictions'].shape)
         return model_out
 
     def backward(self, batch: AMASSBatch, model_out):
@@ -252,7 +232,7 @@ class AttModel(BaseModel):
         """
         predictions = model_out['predictions']
         targets = batch.poses[:, -24:]
-        #print(targets.shape)
+
         total_loss = mse(predictions, targets)
 
         # If you have more than just one loss, just add them to this dict and they will automatically be logged.
