@@ -106,7 +106,7 @@ class AttModel(BaseModel):
         print(config)
         # __init__ arguments in the original attention model
         in_features = 135  # 48
-        kernel_size = 10
+        kernel_size = 10 # M
         d_model = 512
         num_stage = 2
         dct_n = 34
@@ -162,43 +162,47 @@ class AttModel(BaseModel):
         :return:
         """
         src = model_in
-        output_n = 24
-        input_n = 120
+        output_n = 24  # number of output frames T
+        input_n = 120  # number of input frames N
         itera = 1
 
+        # construct keys and queries
         dct_n = self.dct_n
-        src = src[:, :input_n]  # [bs,in_n,dim]
-        src_tmp = src.clone()
-        bs = src.shape[0]
-        src_key_tmp = src_tmp.transpose(1, 2)[:, :, :(input_n - output_n)].clone()
-        src_query_tmp = src_tmp.transpose(1, 2)[:, :, -self.kernel_size:].clone()
+        src = src[:, :input_n]  # remove given output frames
+        src_tmp = src.clone()  # shape:[16, 120, 135]=[batch_size, input_n, in_features]
+        bs = src.shape[0]  # batch_size
+        src_key_tmp = src_tmp.transpose(1, 2)[:, :, :(input_n - output_n)].clone()  # construct keys, shape:[16, 135, 96]
+        src_query_tmp = src_tmp.transpose(1, 2)[:, :, -self.kernel_size:].clone()  # construct queries, shape:[16, 135, 10]
 
+        # get dct matrices
         dct_m, idct_m = util.get_dct_matrix(self.kernel_size + output_n)
         dct_m = torch.from_numpy(dct_m).float().cuda()
         idct_m = torch.from_numpy(idct_m).float().cuda()
 
-        vn = input_n - self.kernel_size - output_n + 1
-        vl = self.kernel_size + output_n
+        # construct values and apply cosine transform
+        vn = input_n - self.kernel_size - output_n + 1  # N - M - T + 1 = 87
+        vl = self.kernel_size + output_n  # M + T = 34
         idx = np.expand_dims(np.arange(vl), axis=0) + \
               np.expand_dims(np.arange(vn), axis=1)
         src_value_tmp = src_tmp[:, idx].clone().reshape(
-            [bs * vn, vl, -1])
+            [bs * vn, vl, -1])  # shape:[1392, 34, 135]
         src_value_tmp = torch.matmul(dct_m[:dct_n].unsqueeze(dim=0), src_value_tmp).reshape(
             [bs, vn, dct_n, -1]).transpose(2, 3).reshape(
-            [bs, vn, -1])  # [32,40,66*11]
+            [bs, vn, -1])  # shape:[16, 87, 34*135]
 
         idx = list(range(-self.kernel_size, 0, 1)) + [-1] * output_n
         outputs = []
 
-        key_tmp = self.convK(src_key_tmp / 1000.0)
+        key_tmp = self.convK(src_key_tmp / 1000.0)  # shape:[16, 512, 87]
         for i in range(itera):
-            query_tmp = self.convQ(src_query_tmp / 1000.0)
+            # Motion Attention
+            query_tmp = self.convQ(src_query_tmp / 1000.0)  # shape:[16, 512, 1]
             score_tmp = torch.matmul(query_tmp.transpose(1, 2), key_tmp) + 1e-15
             att_tmp = score_tmp / (torch.sum(score_tmp, dim=2, keepdim=True))
             dct_att_tmp = torch.matmul(att_tmp, src_value_tmp)[:, 0].reshape(
                 [bs, -1, dct_n])
 
-            input_gcn = src_tmp[:, idx]
+            input_gcn = src_tmp[:, idx]  # shape:[16, 34, 135]
             dct_in_tmp = torch.matmul(dct_m[:dct_n].unsqueeze(dim=0), input_gcn).transpose(1, 2)
             dct_in_tmp = torch.cat([dct_in_tmp, dct_att_tmp], dim=-1)
             dct_out_tmp = self.gcn(dct_in_tmp)
