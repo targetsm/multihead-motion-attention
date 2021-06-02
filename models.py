@@ -15,7 +15,7 @@ from model import GCN, util
 def create_model(config):
     # This is a helper function that can be useful if you have several model definitions that you want to
     # choose from via the command line. For now, we just return the Dummy model.
-    return AttModel(config)
+    return TransformerModel(config)
 
 
 class BaseModel(nn.Module):
@@ -230,6 +230,80 @@ class AttModel(BaseModel):
         :param model_out: Whatever the forward pass returned.
         :return: The loss values for book-keeping, as well as the targets for convenience.
         """
+        predictions = model_out['predictions']
+        targets = batch.poses[:, -24:]
+
+        total_loss = mse(predictions, targets)
+
+        # If you have more than just one loss, just add them to this dict and they will automatically be logged.
+        loss_vals = {'total_loss': total_loss.cpu().item()}
+
+        if self.training:
+            # We only want to do backpropagation in training mode, as this function might also be called when evaluating
+            # the model on the validation set.
+            total_loss.backward()
+
+        return loss_vals, targets
+
+
+class TransformerModel(BaseModel):
+    def __init__(self, config):
+        super(TransformerModel, self).__init__(config)
+
+        self.transformer = torch.nn.Transformer(d_model=135,
+                                                nhead=15,
+                                                num_encoder_layers=6,
+                                                num_decoder_layers=6,
+                                                dim_feedforward=512,
+                                                dropout=0.1,
+                                                activation='relu',
+                                                custom_encoder=None,
+                                                custom_decoder=None)
+
+    def forward(self, batch: AMASSBatch):
+        model_out = {'seed': batch.poses[:, :self.config.seed_seq_len], 'predictions': None}
+        # transpose the Batch such that the batch size in the middle
+        src = batch.poses
+        src = src[:, :120]
+
+        input_n = 120
+        output_n = 24
+        self.kernel_size = 10
+        vn = input_n - self.kernel_size - output_n + 1  # N - M - T + 1 = 87
+        vl = self.kernel_size + output_n  # M + T = 34
+        idx = np.expand_dims(np.arange(vl), axis=0) + \
+              np.expand_dims(np.arange(vn), axis=1)
+        print(idx)
+        print(src[:, idx].reshape(
+            [16 * vn, vl, -1]).shape)
+
+        print(src[:, idx].reshape(
+            [16 * vn, vl, -1]).reshape(
+            [16, vn, -1]).shape)
+
+        src = src[:, idx].reshape(
+            [16 * vn, vl, -1])
+        #print(idx)
+        # get dct matrices
+        #dct_m, idct_m = util.get_dct_matrix(120)
+        #dct_m = torch.from_numpy(dct_m).float().cuda()
+        #idct_m = torch.from_numpy(idct_m).float().cuda()
+        #print(dct_m.shape, idct_m.shape)
+        #print(src.shape)
+        #src = torch.matmul(dct_m, src)
+
+        swapped = src.transpose(0,1)
+
+        out = self.transformer(swapped[:,:,:], swapped[-24:,:,:])
+        out = out.transpose(0,1)
+        #print(out.shape)
+        model_out['predictions'] = out
+        return model_out
+
+    def create_model(self):
+        pass
+
+    def backward(self, batch: AMASSBatch, model_out):
         predictions = model_out['predictions']
         targets = batch.poses[:, -24:]
 
