@@ -319,7 +319,7 @@ class CustomTransformer(BaseModel):
         in_features = 135
         kernel_size = 10  # M
         num_stage = 2
-        dct_n = 34
+        dct_n = 10
         d_model = dct_n * in_features
 
         self.kernel_size = kernel_size
@@ -327,10 +327,10 @@ class CustomTransformer(BaseModel):
         self.dct_n = dct_n
 
         self.transformer = torch.nn.Transformer(d_model=dct_n*in_features,
-                                                nhead=1,
-                                                num_encoder_layers=1,
-                                                num_decoder_layers=1,
-                                                dim_feedforward=10,
+                                                nhead=15,
+                                                num_encoder_layers=6,
+                                                num_decoder_layers=6,
+                                                dim_feedforward=512,
                                                 dropout=0.1,
                                                 activation='relu',
                                                 custom_encoder=None,
@@ -368,16 +368,25 @@ class CustomTransformer(BaseModel):
         src_transformer = src_transformer[:, idx].reshape(
             [bs * vn, vl, -1])  # torch.Size([1552, 34, 135])
         #print(src_transformer.shape)
+
+        # get dct matrices
+        dct_m, idct_m = util.get_dct_matrix(self.kernel_size + output_n)
+        dct_m = torch.from_numpy(dct_m).float().cuda()
+        idct_m = torch.from_numpy(idct_m).float().cuda()
+
+        src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer)
         src_transformer = src_transformer.reshape(
             [bs, vn, -1]).transpose(0,1)  # shape:[16, 97, 34*135]
+        #print(src_transformer.shape, dct_m.shape)
 
-
+        #print(tgt_transformer.shape)
+        tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer)
         tgt_transformer = tgt_transformer.reshape([bs, 1, -1]).transpose(0,1)
         #print(src_transformer.shape, tgt_transformer.shape)
-
         output = self.transformer(src_transformer, tgt_transformer).cuda()
         #print(output.shape)
-        output = output.transpose(0,1).reshape([bs, 34, 135])
+        output = output.transpose(0,1).reshape([bs, self.dct_n, 135])
+        output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output)
         model_out['predictions'] = output[:, -24:, :]
         return model_out
 
