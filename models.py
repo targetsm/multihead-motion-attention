@@ -15,7 +15,7 @@ from model import GCN, util
 def create_model(config):
     # This is a helper function that can be useful if you have several model definitions that you want to
     # choose from via the command line. For now, we just return the Dummy model.
-    return CustomTransformer(config)
+    return AttModel(config)
 
 
 class BaseModel(nn.Module):
@@ -98,17 +98,17 @@ class DummyModel(BaseModel):
         return loss_vals, targets
 
 
-class AttModel(BaseModel):
+class MultiHeadModel(BaseModel):
 
     def __init__(self, config):
-        super(AttModel, self).__init__(config)
+        super(MultiHeadModel, self).__init__(config)
 
         print(config)
         in_features = 135
         kernel_size = 10  # M
-        d_model = 4590
         num_stage = 2
-        dct_n = 34
+        dct_n = 12
+        d_model = dct_n * in_features
 
         self.kernel_size = kernel_size
         self.d_model = d_model
@@ -131,6 +131,8 @@ class AttModel(BaseModel):
         self.gcn = GCN.GCN(input_feature=(dct_n) * 2, hidden_feature=d_model, p_dropout=0.3,
                            num_stage=num_stage,
                            node_n=in_features)
+
+        self.multihead_attn = nn.MultiheadAttention(self.d_model, 10).to('cuda:0')
 
     def create_model(self):
         pass
@@ -186,14 +188,13 @@ class AttModel(BaseModel):
             #dct_att_tmp = torch.matmul(att_tmp, src_value_tmp)[:, 0].reshape(
             #    [bs, -1, dct_n])
             #print(dct_att_tmp.shape, torch.matmul(att_tmp, src_value_tmp).shape)
-
+            #print(query_tmp.shape)
             device = torch.device("cuda:0")
-            query_tmp = query_tmp.reshape([1, 16, 4590])
-            key_tmp = key_tmp.reshape([87, 16, 4590])
-            src_value_tmp = src_value_tmp.reshape([87, 16, 4590])
-            multihead_attn = nn.MultiheadAttention(4590, 1).to(device)
+            query_tmp = query_tmp.reshape([1, bs, self.d_model])
+            key_tmp = key_tmp.reshape([87, bs, self.d_model])
+            src_value_tmp = src_value_tmp.reshape([87, bs, self.d_model])
             #print(query_tmp.shape, key_tmp.shape, src_value_tmp.shape)
-            dct_att_tmp, attn_output_weights = multihead_attn(query_tmp, key_tmp, src_value_tmp)
+            dct_att_tmp, attn_output_weights = self.multihead_attn(query_tmp, key_tmp, src_value_tmp)
             dct_att_tmp = (dct_att_tmp.transpose(0,1))[:, 0].reshape(
                 [bs, -1, dct_n])
             #print(dct_att_tmp.shape)
@@ -203,7 +204,7 @@ class AttModel(BaseModel):
             dct_out_tmp = self.gcn(dct_in_tmp)
             out_gcn = torch.matmul(idct_m[:, :dct_n].unsqueeze(dim=0),
                                    dct_out_tmp[:, :, :dct_n].transpose(1, 2))
-            print(out_gcn.shape)
+            #print(out_gcn.shape)
             outputs.append(out_gcn.unsqueeze(2))
 
         outputs = torch.cat(outputs, dim=2)
@@ -319,7 +320,7 @@ class CustomTransformer(BaseModel):
         in_features = 135
         kernel_size = 10  # M
         num_stage = 2
-        dct_n = 10
+        dct_n = 12
         d_model = dct_n * in_features
 
         self.kernel_size = kernel_size
