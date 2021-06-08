@@ -183,28 +183,18 @@ class MultiHeadModel(BaseModel):
         for i in range(itera):
             # Motion Attention
             query_tmp = self.convQ(src_query_tmp / 1000.0)  # shape:[16, 512, 1] input embedding
-            #score_tmp = torch.matmul(query_tmp.transpose(1, 2), key_tmp) + 1e-15
-            #att_tmp = score_tmp / (torch.sum(score_tmp, dim=2, keepdim=True))
-            #dct_att_tmp = torch.matmul(att_tmp, src_value_tmp)[:, 0].reshape(
-            #    [bs, -1, dct_n])
-            #print(dct_att_tmp.shape, torch.matmul(att_tmp, src_value_tmp).shape)
-            #print(query_tmp.shape)
-            device = torch.device("cuda:0")
             query_tmp = query_tmp.reshape([1, bs, self.d_model])
             key_tmp = key_tmp.reshape([87, bs, self.d_model])
             src_value_tmp = src_value_tmp.reshape([87, bs, self.d_model])
-            #print(query_tmp.shape, key_tmp.shape, src_value_tmp.shape)
             dct_att_tmp, attn_output_weights = self.multihead_attn(query_tmp, key_tmp, src_value_tmp)
             dct_att_tmp = (dct_att_tmp.transpose(0,1))[:, 0].reshape(
                 [bs, -1, dct_n])
-            #print(dct_att_tmp.shape)
             input_gcn = src_tmp[:, idx]  # shape:[16, 34, 135]
             dct_in_tmp = torch.matmul(dct_m[:dct_n].unsqueeze(dim=0), input_gcn).transpose(1, 2)
             dct_in_tmp = torch.cat([dct_in_tmp, dct_att_tmp], dim=-1)
             dct_out_tmp = self.gcn(dct_in_tmp)
             out_gcn = torch.matmul(idct_m[:, :dct_n].unsqueeze(dim=0),
                                    dct_out_tmp[:, :, :dct_n].transpose(1, 2))
-            #print(out_gcn.shape)
             outputs.append(out_gcn.unsqueeze(2))
 
         outputs = torch.cat(outputs, dim=2)
@@ -264,30 +254,15 @@ class TransformerModel(BaseModel):
         vl = self.kernel_size + output_n  # M + T = 34
         idx = np.expand_dims(np.arange(vl), axis=0) + \
               np.expand_dims(np.arange(vn), axis=1)
-        print(idx)
-        print(src[:, idx].reshape(
-            [16 * vn, vl, -1]).shape)
-
-        print(src[:, idx].reshape(
-            [16 * vn, vl, -1]).reshape(
-            [16, vn, -1]).shape)
 
         src = src[:, idx].reshape(
             [16 * vn, vl, -1])
-        #print(idx)
-        # get dct matrices
-        #dct_m, idct_m = util.get_dct_matrix(120)
-        #dct_m = torch.from_numpy(dct_m).float().cuda()
-        #idct_m = torch.from_numpy(idct_m).float().cuda()
-        #print(dct_m.shape, idct_m.shape)
-        #print(src.shape)
-        #src = torch.matmul(dct_m, src)
 
         swapped = src.transpose(0,1)
 
         out = self.transformer(swapped[:,:,:], swapped[-24:,:,:])
         out = out.transpose(0,1)
-        #print(out.shape)
+
         model_out['predictions'] = out
         return model_out
 
@@ -319,7 +294,6 @@ class CustomTransformer(BaseModel):
         print(config)
         in_features = 135
         kernel_size = 10  # M
-        num_stage = 2
         dct_n = 12
         d_model = dct_n * in_features
 
@@ -353,22 +327,17 @@ class CustomTransformer(BaseModel):
         src = batch.poses
         output_n = 24  # number of output frames T
         input_n = 120  # number of input frames N
-        itera = 1
 
         src_tmp = src.clone()  # torch.Size([16, 144, 135])
         src_transformer = src_tmp[:,:input_n,:].clone()  # torch.Size([16, 120, 135])
         tgt_transformer = src_tmp[:,-output_n-self.kernel_size:,:].clone()  # torch.Size([16, 34, 135])
-        #print(src_transformer.shape, tgt_transformer.shape)
 
         vn = input_n - self.kernel_size - output_n + 1  # N - M - T + 1 = 87
         vl = self.kernel_size + output_n  # M + T = 34
         idx = np.expand_dims(np.arange(vl), axis=0) + \
               np.expand_dims(np.arange(vn), axis=1)
-        #print(idx)
-        #print(src_transformer.shape)
         src_transformer = src_transformer[:, idx].reshape(
             [bs * vn, vl, -1])  # torch.Size([1552, 34, 135])
-        #print(src_transformer.shape)
 
         # get dct matrices
         dct_m, idct_m = util.get_dct_matrix(self.kernel_size + output_n)
@@ -378,14 +347,11 @@ class CustomTransformer(BaseModel):
         src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer)
         src_transformer = src_transformer.reshape(
             [bs, vn, -1]).transpose(0,1)  # shape:[16, 97, 34*135]
-        #print(src_transformer.shape, dct_m.shape)
 
-        #print(tgt_transformer.shape)
         tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer)
         tgt_transformer = tgt_transformer.reshape([bs, 1, -1]).transpose(0,1)
-        #print(src_transformer.shape, tgt_transformer.shape)
+
         output = self.transformer(src_transformer, tgt_transformer).cuda()
-        #print(output.shape)
         output = output.transpose(0,1).reshape([bs, self.dct_n, 135])
         output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output)
         model_out['predictions'] = output[:, -24:, :]
@@ -422,7 +388,6 @@ class CustomTransformer2(BaseModel):
         print(config)
         in_features = 135
         kernel_size = 10  # M
-        num_stage = 2
         dct_n = 144
         d_model = dct_n * in_features
 
@@ -461,23 +426,19 @@ class CustomTransformer2(BaseModel):
         src_tmp = src.clone()  # torch.Size([16, 144, 135])
         src_transformer = src_tmp[:, :input_n, :].clone()  # torch.Size([16, 120, 135])
         tgt_transformer = src_tmp[:, :, :].clone()  # torch.Size([16, 34, 135])
-        # print(src_transformer.shape, tgt_transformer.shape)
 
         src_transformer = src_transformer[:, list(range(0,120)) + [-1]*output_n]
         if tgt_transformer.shape[1] == 120:
             tgt_transformer = tgt_transformer[:, list(range(0, 120)) + [-1] * output_n]
+
         # get dct matrices
         dct_m, idct_m = util.get_dct_matrix(input_n + output_n)
         dct_m = torch.from_numpy(dct_m).float().cuda()
         idct_m = torch.from_numpy(idct_m).float().cuda()
-        #print(src_transformer.shape, dct_m.shape)
         src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer).transpose(0,1)
-        # print(src_transformer.shape, dct_m.shape)
 
-        # print(tgt_transformer.shape)
-        #print(dct_m[:self.dct_n].unsqueeze(dim=0).shape, tgt_transformer.shape)
         tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer).transpose(0,1)
-        #print(src_transformer.shape, tgt_transformer.shape)
+
         output = self.transformer(src_transformer, tgt_transformer).cuda()
 
         output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output.transpose(0,1))
@@ -514,7 +475,6 @@ class CustomTransformer3(BaseModel):
         print(config)
         in_features = 135
         kernel_size = 10  # M
-        num_stage = 2
         dct_n = 12
         d_model = dct_n * in_features
 
@@ -553,7 +513,6 @@ class CustomTransformer3(BaseModel):
         src_tmp = src.clone()  # torch.Size([16, 144, 135])
         src_transformer = src_tmp[:, :, :].clone()  # torch.Size([16, 120, 135])
         tgt_transformer = src_tmp[:, :, :].clone()  # torch.Size([16, 34, 135])
-        # print(src_transformer.shape, tgt_transformer.shape)
 
         vn = input_n - self.kernel_size + 1  # N - M - T + 1 = 87
         vl_src = self.kernel_size  # M + T = 34
@@ -562,31 +521,21 @@ class CustomTransformer3(BaseModel):
                   np.expand_dims(np.arange(vn), axis=1)
         idx_tgt = np.expand_dims(np.arange(vl_tgt), axis=0) + \
                   np.expand_dims(np.arange(vn), axis=1)
-        #print(idx_src, idx_tgt)
+
         src_transformer = src_transformer[:, idx_src].reshape(
             [bs * vn, vl_src, -1])
         src_transformer = src_transformer[:, list(range(0, vl_src)) + [-1] * output_n]
-        #print(src_transformer.shape)
         tgt_transformer = tgt_transformer[:, idx_tgt].reshape(
             [bs * vn, vl_tgt, -1])
-
-        #print(src_transformer.shape, tgt_transformer.shape)
-        #print(src_transformer)
 
         # get dct matrices
         dct_m, idct_m = util.get_dct_matrix(self.kernel_size + output_n)
         dct_m = torch.from_numpy(dct_m).float().cuda()
         idct_m = torch.from_numpy(idct_m).float().cuda()
-        # print(src_transformer.shape, dct_m.shape)
         src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer)
-        # print(src_transformer.shape, dct_m.shape)
-
-        # print(tgt_transformer.shape)
-        # print(dct_m[:self.dct_n].unsqueeze(dim=0).shape, tgt_transformer.shape)
         tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer)
-        # print(src_transformer.shape, tgt_transformer.shape)
+
         output = self.transformer(src_transformer, tgt_transformer).cuda()
-        # print(idct_m[:, :self.dct_n].unsqueeze(dim=0).shape, output.shape)
         output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output)
         idx = [x * vn for x in range(0, bs)]
         model_out['predictions'] = output[idx, -24:, :]
@@ -622,7 +571,6 @@ class CustomTransformer4(BaseModel):
         print(config)
         in_features = 135
         kernel_size = 10  # M
-        num_stage = 2
         dct_n = 12
         d_model = dct_n * in_features
 
@@ -661,7 +609,6 @@ class CustomTransformer4(BaseModel):
         src_tmp = src.clone()  # torch.Size([16, 144, 135])
         src_transformer = src_tmp[:, :, :].clone()  # torch.Size([16, 120, 135])
         tgt_transformer = src_tmp[:, :, :].clone()  # torch.Size([16, 34, 135])
-        # print(src_transformer.shape, tgt_transformer.shape)
 
         vn = input_n - self.kernel_size + 1  # N - M - T + 1 = 87
         vl_src = self.kernel_size  # M + T = 34
@@ -676,7 +623,6 @@ class CustomTransformer4(BaseModel):
         tgt_transformer = tgt_transformer[:, idx_tgt].reshape(
             [bs * vn, vl_tgt, -1])
 
-
         # get dct matrices
         dct_m, idct_m = util.get_dct_matrix(self.kernel_size + output_n)
         dct_m = torch.from_numpy(dct_m).float().cuda()
@@ -686,7 +632,6 @@ class CustomTransformer4(BaseModel):
         src_transformer = src_transformer.reshape(
             [bs, vn, self.dct_n, -1]).transpose(2, 3).reshape(
             [bs, vn, -1])  # shape:[16, 87, 34*135]
-        #print(src_transformer.shape)
         tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer)
         tgt_transformer = tgt_transformer.reshape(
             [bs, vn, self.dct_n, -1]).transpose(2, 3).reshape(
