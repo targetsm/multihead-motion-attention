@@ -15,7 +15,7 @@ from model import GCN, util
 def create_model(config):
     # This is a helper function that can be useful if you have several model definitions that you want to
     # choose from via the command line. For now, we just return the Dummy model.
-    return CustomTransformer2(config)
+    return CustomTransformer4(config)
 
 
 class BaseModel(nn.Module):
@@ -463,7 +463,6 @@ class CustomTransformer2(BaseModel):
         tgt_transformer = src_tmp[:, :, :].clone()  # torch.Size([16, 34, 135])
         # print(src_transformer.shape, tgt_transformer.shape)
 
-        idx = list(range(-self.kernel_size, 0, 1)) + [-1] * output_n
         src_transformer = src_transformer[:, list(range(0,120)) + [-1]*output_n]
         if tgt_transformer.shape[1] == 120:
             tgt_transformer = tgt_transformer[:, list(range(0, 120)) + [-1] * output_n]
@@ -472,17 +471,233 @@ class CustomTransformer2(BaseModel):
         dct_m = torch.from_numpy(dct_m).float().cuda()
         idct_m = torch.from_numpy(idct_m).float().cuda()
         #print(src_transformer.shape, dct_m.shape)
-        src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer)
+        src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer).transpose(0,1)
         # print(src_transformer.shape, dct_m.shape)
 
         # print(tgt_transformer.shape)
         #print(dct_m[:self.dct_n].unsqueeze(dim=0).shape, tgt_transformer.shape)
-        tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer)
+        tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer).transpose(0,1)
         #print(src_transformer.shape, tgt_transformer.shape)
         output = self.transformer(src_transformer, tgt_transformer).cuda()
-        #print(idct_m[:, :self.dct_n].unsqueeze(dim=0).shape, output.shape)
-        output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output)
+
+        output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output.transpose(0,1))
         model_out['predictions'] = output[:, -24:, :]
+        return model_out
+
+    def backward(self, batch: AMASSBatch, model_out):
+        """
+        The backward pass.
+        :param batch: The same batch of data that was passed into the forward pass.
+        :param model_out: Whatever the forward pass returned.
+        :return: The loss values for book-keeping, as well as the targets for convenience.
+        """
+        predictions = model_out['predictions']
+        targets = batch.poses[:, -24:]
+
+        total_loss = mse(predictions, targets)
+
+        # If you have more than just one loss, just add them to this dict and they will automatically be logged.
+        loss_vals = {'total_loss': total_loss.cpu().item()}
+
+        if self.training:
+            # We only want to do backpropagation in training mode, as this function might also be called when evaluating
+            # the model on the validation set.
+            total_loss.backward()
+
+        return loss_vals, targets
+
+class CustomTransformer3(BaseModel):
+
+    def __init__(self, config):
+        super(CustomTransformer3, self).__init__(config)
+
+        print(config)
+        in_features = 135
+        kernel_size = 10  # M
+        num_stage = 2
+        dct_n = 12
+        d_model = dct_n * in_features
+
+        self.kernel_size = kernel_size
+        self.d_model = d_model
+        self.dct_n = dct_n
+
+        self.transformer = torch.nn.Transformer(d_model=in_features,
+                                                nhead=15,
+                                                num_encoder_layers=6,
+                                                num_decoder_layers=6,
+                                                dim_feedforward=512,
+                                                dropout=0.1,
+                                                activation='relu',
+                                                custom_encoder=None,
+                                                custom_decoder=None)
+
+    def create_model(self):
+        pass
+
+    def forward(self, batch: AMASSBatch):
+        """
+        The forward pass.
+        :param batch: Current batch of data.
+        :return: Each forward pass must return a dictionary with keys {'seed', 'predictions'}.
+        """
+
+        model_out = {'seed': batch.poses[:, :self.config.seed_seq_len],
+                     'predictions': None}
+        bs = batch.batch_size
+        src = batch.poses
+        output_n = 24  # number of output frames T
+        input_n = src.shape[1] - output_n  # number of input frames N
+        itera = 1
+
+        src_tmp = src.clone()  # torch.Size([16, 144, 135])
+        src_transformer = src_tmp[:, :, :].clone()  # torch.Size([16, 120, 135])
+        tgt_transformer = src_tmp[:, :, :].clone()  # torch.Size([16, 34, 135])
+        # print(src_transformer.shape, tgt_transformer.shape)
+
+        vn = input_n - self.kernel_size + 1  # N - M - T + 1 = 87
+        vl_src = self.kernel_size  # M + T = 34
+        vl_tgt = self.kernel_size + output_n  # M + T = 34
+        idx_src = np.expand_dims(np.arange(vl_src), axis=0) + \
+                  np.expand_dims(np.arange(vn), axis=1)
+        idx_tgt = np.expand_dims(np.arange(vl_tgt), axis=0) + \
+                  np.expand_dims(np.arange(vn), axis=1)
+        #print(idx_src, idx_tgt)
+        src_transformer = src_transformer[:, idx_src].reshape(
+            [bs * vn, vl_src, -1])
+        src_transformer = src_transformer[:, list(range(0, vl_src)) + [-1] * output_n]
+        #print(src_transformer.shape)
+        tgt_transformer = tgt_transformer[:, idx_tgt].reshape(
+            [bs * vn, vl_tgt, -1])
+
+        #print(src_transformer.shape, tgt_transformer.shape)
+        #print(src_transformer)
+
+        # get dct matrices
+        dct_m, idct_m = util.get_dct_matrix(self.kernel_size + output_n)
+        dct_m = torch.from_numpy(dct_m).float().cuda()
+        idct_m = torch.from_numpy(idct_m).float().cuda()
+        # print(src_transformer.shape, dct_m.shape)
+        src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer)
+        # print(src_transformer.shape, dct_m.shape)
+
+        # print(tgt_transformer.shape)
+        # print(dct_m[:self.dct_n].unsqueeze(dim=0).shape, tgt_transformer.shape)
+        tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer)
+        # print(src_transformer.shape, tgt_transformer.shape)
+        output = self.transformer(src_transformer, tgt_transformer).cuda()
+        # print(idct_m[:, :self.dct_n].unsqueeze(dim=0).shape, output.shape)
+        output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output)
+        idx = [x * vn for x in range(0, bs)]
+        model_out['predictions'] = output[idx, -24:, :]
+        return model_out
+
+    def backward(self, batch: AMASSBatch, model_out):
+        """
+        The backward pass.
+        :param batch: The same batch of data that was passed into the forward pass.
+        :param model_out: Whatever the forward pass returned.
+        :return: The loss values for book-keeping, as well as the targets for convenience.
+        """
+        predictions = model_out['predictions']
+        targets = batch.poses[:, -24:]
+
+        total_loss = mse(predictions, targets)
+
+        # If you have more than just one loss, just add them to this dict and they will automatically be logged.
+        loss_vals = {'total_loss': total_loss.cpu().item()}
+
+        if self.training:
+            # We only want to do backpropagation in training mode, as this function might also be called when evaluating
+            # the model on the validation set.
+            total_loss.backward()
+
+        return loss_vals, targets
+
+class CustomTransformer4(BaseModel):
+
+    def __init__(self, config):
+        super(CustomTransformer4, self).__init__(config)
+
+        print(config)
+        in_features = 135
+        kernel_size = 10  # M
+        num_stage = 2
+        dct_n = 12
+        d_model = dct_n * in_features
+
+        self.kernel_size = kernel_size
+        self.d_model = d_model
+        self.dct_n = dct_n
+
+        self.transformer = torch.nn.Transformer(d_model=d_model,
+                                                nhead=15,
+                                                num_encoder_layers=6,
+                                                num_decoder_layers=6,
+                                                dim_feedforward=512,
+                                                dropout=0.1,
+                                                activation='relu',
+                                                custom_encoder=None,
+                                                custom_decoder=None)
+
+    def create_model(self):
+        pass
+
+    def forward(self, batch: AMASSBatch):
+        """
+        The forward pass.
+        :param batch: Current batch of data.
+        :return: Each forward pass must return a dictionary with keys {'seed', 'predictions'}.
+        """
+
+        model_out = {'seed': batch.poses[:, :self.config.seed_seq_len],
+                     'predictions': None}
+        bs = batch.batch_size
+        src = batch.poses
+        output_n = 24  # number of output frames T
+        input_n = 120  # number of input frames N
+        itera = 1
+
+        src_tmp = src.clone()  # torch.Size([16, 144, 135])
+        src_transformer = src_tmp[:, :, :].clone()  # torch.Size([16, 120, 135])
+        tgt_transformer = src_tmp[:, :, :].clone()  # torch.Size([16, 34, 135])
+        # print(src_transformer.shape, tgt_transformer.shape)
+
+        vn = input_n - self.kernel_size + 1  # N - M - T + 1 = 87
+        vl_src = self.kernel_size  # M + T = 34
+        vl_tgt = self.kernel_size + output_n  # M + T = 34
+        idx_src = np.expand_dims(np.arange(vl_src), axis=0) + \
+                  np.expand_dims(np.arange(vn), axis=1)
+        idx_tgt = np.expand_dims(np.arange(vl_tgt), axis=0) + \
+                  np.expand_dims(np.arange(vn), axis=1)
+        src_transformer = src_transformer[:, idx_src].reshape(
+            [bs * vn, vl_src, -1])
+        src_transformer = src_transformer[:, list(range(0, vl_src)) + [-1] * output_n]
+        tgt_transformer = tgt_transformer[:, idx_tgt].reshape(
+            [bs * vn, vl_tgt, -1])
+
+
+        # get dct matrices
+        dct_m, idct_m = util.get_dct_matrix(self.kernel_size + output_n)
+        dct_m = torch.from_numpy(dct_m).float().cuda()
+        idct_m = torch.from_numpy(idct_m).float().cuda()
+
+        src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer)
+        src_transformer = src_transformer.reshape(
+            [bs, vn, self.dct_n, -1]).transpose(2, 3).reshape(
+            [bs, vn, -1])  # shape:[16, 87, 34*135]
+        #print(src_transformer.shape)
+        tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer)
+        tgt_transformer = tgt_transformer.reshape(
+            [bs, vn, self.dct_n, -1]).transpose(2, 3).reshape(
+            [bs, vn, -1])  # shape:[16, 87, 34*135]
+
+        output = self.transformer(src_transformer, tgt_transformer).cuda()
+
+        output = output.reshape([bs*vn, self.dct_n, 135])
+        output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output)
+        idx = [x * vn for x in range(0, bs)]
+        model_out['predictions'] = output[idx, -24:, :]
         return model_out
 
     def backward(self, batch: AMASSBatch, model_out):
