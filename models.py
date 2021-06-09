@@ -15,7 +15,7 @@ from model import GCN, util
 def create_model(config):
     # This is a helper function that can be useful if you have several model definitions that you want to
     # choose from via the command line. For now, we just return the Dummy model.
-    return MultiHeadStackedModel(config)
+    return CustomTransformer(config)
 
 
 class BaseModel(nn.Module):
@@ -294,14 +294,14 @@ class CustomTransformer(BaseModel):
         print(config)
         in_features = 135
         kernel_size = 10  # M
-        dct_n = 12
+        dct_n = 144
         d_model = dct_n * in_features
 
         self.kernel_size = kernel_size
         self.d_model = d_model
         self.dct_n = dct_n
 
-        self.transformer = torch.nn.Transformer(d_model=dct_n*in_features,
+        self.transformer = torch.nn.Transformer(d_model=in_features,
                                                 nhead=15,
                                                 num_encoder_layers=6,
                                                 num_decoder_layers=6,
@@ -328,33 +328,34 @@ class CustomTransformer(BaseModel):
         output_n = 24  # number of output frames T
         input_n = 120  # number of input frames N
 
+
+        '''if src.shape[1] == 120:
+            # initialized the input of the decoder with sos_idx (start of sentence token idx)
+            src_encoder = src.transpose(0,1)
+            encoder_output = self.transformer.encoder(src_encoder)
+            output = np.repeat(src[:, -1:, :].cpu(), 24, axis=1).cuda().transpose(0,1)
+            print(output.shape)
+            for t in range(1, output_n):
+                output = output[:, :t].transpose(0,1)
+                tgt_mask = torch.nn.Transformer().generate_square_subsequent_mask(
+                    t).cuda().transpose(0, 1)
+                decoder_output = self.transformer.decoder(tgt=output,
+                                         memory=encoder_output,
+                                         tgt_mask=tgt_mask)
+                output[:, t] = decoder_output
+            model_out['predictions'] = output.transpose(0, 1)[:, -24:]
+            return model_out'''
         src_tmp = src.clone()  # torch.Size([16, 144, 135])
-        src_transformer = src_tmp[:,:input_n,:].clone()  # torch.Size([16, 120, 135])
-        tgt_transformer = src_tmp[:,-output_n-self.kernel_size:,:].clone()  # torch.Size([16, 34, 135])
+        src_transformer = src_tmp[:, :input_n, :].clone().transpose(0,1)  # torch.Size([16, 120, 135])
+        tgt_transformer = src_tmp[:, -output_n:, :].clone().transpose(0,1) # torch.Size([16, 34, 135])
+        if src.shape[1] == 120:
+            tgt_transformer = np.repeat(src[:, -1:, :].cpu(), 24, axis=1).cuda().transpose(0,1) # das ist falsch, müssten es so verändern, dass der output sequentiell generiert wird
 
-        vn = input_n - self.kernel_size - output_n + 1  # N - M - T + 1 = 87
-        vl = self.kernel_size + output_n  # M + T = 34
-        idx = np.expand_dims(np.arange(vl), axis=0) + \
-              np.expand_dims(np.arange(vn), axis=1)
-        src_transformer = src_transformer[:, idx].reshape(
-            [bs * vn, vl, -1])  # torch.Size([1552, 34, 135])
+        tgt_mask = np.triu(np.ones((output_n, output_n)), k=1).astype('uint8')
+        tgt_mask = torch.from_numpy(tgt_mask).cuda() == 1
+        output = self.transformer(src_transformer, tgt_transformer, tgt_mask=tgt_mask).cuda()
 
-        # get dct matrices
-        dct_m, idct_m = util.get_dct_matrix(self.kernel_size + output_n)
-        dct_m = torch.from_numpy(dct_m).float().cuda()
-        idct_m = torch.from_numpy(idct_m).float().cuda()
-
-        src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer)
-        src_transformer = src_transformer.reshape(
-            [bs, vn, -1]).transpose(0,1)  # shape:[16, 97, 34*135]
-
-        tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer)
-        tgt_transformer = tgt_transformer.reshape([bs, 1, -1]).transpose(0,1)
-
-        output = self.transformer(src_transformer, tgt_transformer).cuda()
-        output = output.transpose(0,1).reshape([bs, self.dct_n, 135])
-        output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output)
-        model_out['predictions'] = output[:, -24:, :]
+        model_out['predictions'] = output.transpose(0,1)[:,-24:]
         return model_out
 
     def backward(self, batch: AMASSBatch, model_out):
@@ -378,7 +379,6 @@ class CustomTransformer(BaseModel):
             total_loss.backward()
 
         return loss_vals, targets
-
 
 class CustomTransformer2(BaseModel):
 
@@ -435,13 +435,13 @@ class CustomTransformer2(BaseModel):
         dct_m, idct_m = util.get_dct_matrix(input_n + output_n)
         dct_m = torch.from_numpy(dct_m).float().cuda()
         idct_m = torch.from_numpy(idct_m).float().cuda()
-        src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer)
+        src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer).transpose(0,1)
 
-        tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer)
+        tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer).transpose(0,1)
 
         output = self.transformer(src_transformer, tgt_transformer).cuda()
 
-        output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output)
+        output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output.transpose(0,1))
         model_out['predictions'] = output[:, -24:, :]
         return model_out
 
