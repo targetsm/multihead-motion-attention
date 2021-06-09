@@ -15,7 +15,7 @@ from model import GCN, util
 def create_model(config):
     # This is a helper function that can be useful if you have several model definitions that you want to
     # choose from via the command line. For now, we just return the Dummy model.
-    return AttModel(config)
+    return TransformerModel(config)
 
 
 class BaseModel(nn.Module):
@@ -178,43 +178,25 @@ class AttModel(BaseModel):
         outputs = []
 
         key_tmp = self.convK(src_key_tmp / 1000.0)  # shape:[16, 512, 87]
-        for i in range(itera):
-            # Motion Attention
-            query_tmp = self.convQ(src_query_tmp / 1000.0)  # shape:[16, 512, 1]
-            score_tmp = torch.matmul(query_tmp.transpose(1, 2), key_tmp) + 1e-15
-            att_tmp = score_tmp / (torch.sum(score_tmp, dim=2, keepdim=True))
-            dct_att_tmp = torch.matmul(att_tmp, src_value_tmp)[:, 0].reshape(
-                [bs, -1, dct_n])
 
-            input_gcn = src_tmp[:, idx]  # shape:[16, 34, 135]
-            dct_in_tmp = torch.matmul(dct_m[:dct_n].unsqueeze(dim=0), input_gcn).transpose(1, 2)
-            dct_in_tmp = torch.cat([dct_in_tmp, dct_att_tmp], dim=-1)
-            dct_out_tmp = self.gcn(dct_in_tmp)
-            out_gcn = torch.matmul(idct_m[:, :dct_n].unsqueeze(dim=0),
-                                   dct_out_tmp[:, :, :dct_n].transpose(1, 2))
-            outputs.append(out_gcn.unsqueeze(2))
-            if itera > 1:
-                # update key-value query
-                out_tmp = out_gcn.clone()[:, 0 - output_n:]
-                src_tmp = torch.cat([src_tmp, out_tmp], dim=1)
+        # Motion Attention
+        query_tmp = self.convQ(src_query_tmp / 1000.0)  # shape:[16, 512, 1]
+        score_tmp = torch.matmul(query_tmp.transpose(1, 2), key_tmp) + 1e-15
+        att_tmp = score_tmp / (torch.sum(score_tmp, dim=2, keepdim=True))
+        dct_att_tmp = torch.matmul(att_tmp, src_value_tmp)[:, 0].reshape(
+            [bs, -1, dct_n])
 
-                vn = 1 - 2 * self.kernel_size - output_n
-                vl = self.kernel_size + output_n
-                idx_dct = np.expand_dims(np.arange(vl), axis=0) + \
-                          np.expand_dims(np.arange(vn, -self.kernel_size - output_n + 1), axis=1)
+        input_gcn = src_tmp[:, idx]  # shape:[16, 34, 135]
+        dct_in_tmp = torch.matmul(dct_m[:dct_n].unsqueeze(dim=0), input_gcn).transpose(1, 2) # size(dct_n.unsqueeze) [1, 34, 34]
+        #print("dct_m: " + str(dct_m.shape))
+        #print("transp: " + str(dct_m[:dct_n].unsqueeze(dim=0).shape))
+        #print("out: " + str(dct_in_tmp.shape))
+        dct_in_tmp = torch.cat([dct_in_tmp, dct_att_tmp], dim=-1)
+        dct_out_tmp = self.gcn(dct_in_tmp)
+        out_gcn = torch.matmul(idct_m[:, :dct_n].unsqueeze(dim=0),
+                                dct_out_tmp[:, :, :dct_n].transpose(1, 2))
+        outputs.append(out_gcn.unsqueeze(2))
 
-                src_key_tmp = src_tmp[:, idx_dct[0, :-1]].transpose(1, 2)
-                key_new = self.convK(src_key_tmp / 1000.0)
-                key_tmp = torch.cat([key_tmp, key_new], dim=2)
-
-                src_dct_tmp = src_tmp[:, idx_dct].clone().reshape(
-                    [bs * self.kernel_size, vl, -1])
-                src_dct_tmp = torch.matmul(dct_m[:dct_n].unsqueeze(dim=0), src_dct_tmp).reshape(
-                    [bs, self.kernel_size, dct_n, -1]).transpose(2, 3).reshape(
-                    [bs, self.kernel_size, -1])
-                src_value_tmp = torch.cat([src_value_tmp, src_dct_tmp], dim=1)
-
-                src_query_tmp = src_tmp[:, -self.kernel_size:].transpose(1, 2)
 
         outputs = torch.cat(outputs, dim=2)
 
@@ -244,3 +226,68 @@ class AttModel(BaseModel):
             total_loss.backward()
 
         return loss_vals, targets
+
+
+
+class TransformerModel(BaseModel):
+    def __init__(self, config):
+        super(TransformerModel, self).__init__(config)
+
+
+        self.transformer = torch.nn.Transformer(d_model=135, 
+                                                nhead=15, 
+                                                num_encoder_layers=6, 
+                                                num_decoder_layers=6, 
+                                                dim_feedforward=2048, 
+                                                dropout=0.1, 
+                                                activation='relu', 
+                                                custom_encoder=None, 
+                                                custom_decoder=None)
+
+
+    def forward(self, batch: AMASSBatch):
+        dct_m, idct_m = util.get_dct_matrix(24)
+        dct_m = torch.from_numpy(dct_m).float().cuda()
+        idct_m = torch.from_numpy(idct_m).float().cuda()
+
+        model_out = {'seed': batch.poses[:, :self.config.seed_seq_len], 'predictions': None}
+        # transpose the Batch such that the batch size in the middle
+        src = batch.poses
+        src = src[:, :120] 
+        swapped = torch.swapaxes(src, 0, 1) 
+
+        # print("new")
+        input_dct = swapped[-24:,:,:].swapaxes(0, 1)
+        # print(input_dct.shape)
+        # print(dct_m.unsqueeze(dim=0).shape)
+        trans_in = torch.matmul(dct_m.unsqueeze(dim=0), input_dct).swapaxes(0, 1) # size(dct_n.unsqueeze) [1, 24, 24]
+
+        out = self.transformer(swapped, trans_in)
+
+        input_idct = out.swapaxes(0, 1).swapaxes(1, 2)
+        final_out = torch.matmul(idct_m.unsqueeze(dim=0), input_dct)
+
+        model_out['predictions'] = torch.swapaxes(out, 0, 1)
+        return model_out
+
+    def create_model(self):
+        pass
+
+
+    def backward(self, batch: AMASSBatch, model_out):
+        predictions = model_out['predictions']
+        targets = batch.poses[:, -24:]
+
+        total_loss = mse(predictions, targets)
+
+        # If you have more than just one loss, just add them to this dict and they will automatically be logged.
+        loss_vals = {'total_loss': total_loss.cpu().item()}
+
+        if self.training:
+            # We only want to do backpropagation in training mode, as this function might also be called when evaluating
+            # the model on the validation set.
+            total_loss.backward()
+
+        return loss_vals, targets
+
+        
