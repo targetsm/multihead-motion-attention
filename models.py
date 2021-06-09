@@ -710,14 +710,14 @@ class MultiHeadStackedModel(BaseModel):
                            node_n=in_features)
 
         self.multihead_attn = nn.MultiheadAttention(self.d_model, 16).to('cuda:0')
-        self.multihead_attn_layer2 = nn.MultiheadAttention(self.d_model, 16).to('cuda:0')
+        # self.multihead_attn_layer2 = nn.MultiheadAttention(self.d_model, 16).to('cuda:0')
         #
-        self.neural_net = nn.Sequential(
-            nn.Linear(in_features=d_model, out_features=d_model),
-            nn.ReLU(),
-            nn.Linear(in_features=d_model, out_features=d_model),
-            nn.ReLU(),
-        )
+        # self.neural_net = nn.Sequential(
+        #     nn.Linear(in_features=d_model, out_features=d_model),
+        #     nn.ReLU(),
+        #     nn.Linear(in_features=d_model, out_features=d_model),
+        #     nn.ReLU(),
+        # )
 
         self.ff_nn = nn.Sequential(
             nn.Linear(in_features=(in_features * dct_n), out_features=1024),
@@ -784,10 +784,10 @@ class MultiHeadStackedModel(BaseModel):
 
         mh_attn_out, weights = self.multihead_attn(query_tmp, key_tmp, value_tmp)
 
-        mh2_query_tmp = self.neural_net(mh_attn_out)
-        mh2_attn_out, weights = self.multihead_attn_layer2(mh2_query_tmp, key_tmp, value_tmp)
+        # mh2_query_tmp = self.neural_net(mh_attn_out)
+        # mh2_attn_out, weights = self.multihead_attn_layer2(mh2_query_tmp, key_tmp, value_tmp)
 
-        af_ff_out = self.rev_ff_nn(mh2_attn_out).swapaxes(0,1).reshape(batch_size, -1, dct_n)
+        af_ff_out = self.rev_ff_nn(mh_attn_out).swapaxes(0,1).reshape(batch_size, -1, dct_n)
 
         input_gcn = src_tmp[:, idx]  # shape:[16, 34, 135]
 
