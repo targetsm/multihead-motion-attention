@@ -435,13 +435,13 @@ class CustomTransformer2(BaseModel):
         dct_m, idct_m = util.get_dct_matrix(input_n + output_n)
         dct_m = torch.from_numpy(dct_m).float().cuda()
         idct_m = torch.from_numpy(idct_m).float().cuda()
-        src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer).transpose(0,1)
+        src_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), src_transformer)
 
-        tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer).transpose(0,1)
+        tgt_transformer = torch.matmul(dct_m[:self.dct_n].unsqueeze(dim=0), tgt_transformer)
 
         output = self.transformer(src_transformer, tgt_transformer).cuda()
 
-        output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output.transpose(0,1))
+        output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output)
         model_out['predictions'] = output[:, -24:, :]
         return model_out
 
@@ -563,6 +563,7 @@ class CustomTransformer3(BaseModel):
 
         return loss_vals, targets
 
+
 class CustomTransformer4(BaseModel):
 
     def __init__(self, config):
@@ -607,21 +608,22 @@ class CustomTransformer4(BaseModel):
         itera = 1
 
         src_tmp = src.clone()  # torch.Size([16, 144, 135])
-        src_transformer = src_tmp[:, :, :].clone()  # torch.Size([16, 120, 135])
+
+        src_transformer = src_tmp[:, list(range(0, input_n)) + [-1] * output_n].clone()  # torch.Size([16, 120, 135])
         tgt_transformer = src_tmp[:, :, :].clone()  # torch.Size([16, 34, 135])
+        if src.shape[1] == 120:
+            tgt_transformer = src_tmp[:, list(range(0, input_n)) + [-1] * output_n].clone()
 
         vn = input_n - self.kernel_size + 1  # N - M - T + 1 = 87
-        vl_src = self.kernel_size  # M + T = 34
-        vl_tgt = self.kernel_size + output_n  # M + T = 34
-        idx_src = np.expand_dims(np.arange(vl_src), axis=0) + \
+        vl = self.kernel_size + output_n  # M + T = 34
+        idx_src = np.expand_dims(np.arange(vl), axis=0) + \
                   np.expand_dims(np.arange(vn), axis=1)
-        idx_tgt = np.expand_dims(np.arange(vl_tgt), axis=0) + \
+        idx_tgt = np.expand_dims(np.arange(vl), axis=0) + \
                   np.expand_dims(np.arange(vn), axis=1)
         src_transformer = src_transformer[:, idx_src].reshape(
-            [bs * vn, vl_src, -1])
-        src_transformer = src_transformer[:, list(range(0, vl_src)) + [-1] * output_n]
+            [bs * vn, vl, -1])
         tgt_transformer = tgt_transformer[:, idx_tgt].reshape(
-            [bs * vn, vl_tgt, -1])
+            [bs * vn, vl, -1])
 
         # get dct matrices
         dct_m, idct_m = util.get_dct_matrix(self.kernel_size + output_n)
@@ -637,7 +639,10 @@ class CustomTransformer4(BaseModel):
             [bs, vn, self.dct_n, -1]).transpose(2, 3).reshape(
             [bs, vn, -1])  # shape:[16, 87, 34*135]
 
+        src_transformer = src_transformer.transpose(0,1)
+        tgt_transformer = tgt_transformer.transpose(0,1)
         output = self.transformer(src_transformer, tgt_transformer).cuda()
+        output = output.transpose(0,1)
 
         output = output.reshape([bs*vn, self.dct_n, 135])
         output = torch.matmul(idct_m[:, :self.dct_n].unsqueeze(dim=0), output)
