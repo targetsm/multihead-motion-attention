@@ -683,7 +683,7 @@ class MultiHeadStackedModel(BaseModel):
         print(config)
         in_features = 135
         kernel_size = 10  # M
-        num_stage = 2
+        num_stage = 8
         dct_n = 34
         d_model = 512
 
@@ -710,14 +710,14 @@ class MultiHeadStackedModel(BaseModel):
                            node_n=in_features)
 
         self.multihead_attn = nn.MultiheadAttention(self.d_model, 16).to('cuda:0')
-        # self.multihead_attn_layer2 = nn.MultiheadAttention(self.d_model, 16).to('cuda:0')
-        #
-        # self.neural_net = nn.Sequential(
-        #     nn.Linear(in_features=d_model, out_features=d_model),
-        #     nn.ReLU(),
-        #     nn.Linear(in_features=d_model, out_features=d_model),
-        #     nn.ReLU(),
-        # )
+        self.multihead_attn_layer2 = nn.MultiheadAttention(self.d_model, 16).to('cuda:0')
+        
+        self.neural_net = nn.Sequential(
+            nn.Linear(in_features=d_model, out_features=d_model),
+            nn.ReLU(),
+            nn.Linear(in_features=d_model, out_features=d_model),
+            nn.ReLU(),
+        )
 
         self.ff_nn = nn.Sequential(
             nn.Linear(in_features=(in_features * dct_n), out_features=1024),
@@ -732,6 +732,10 @@ class MultiHeadStackedModel(BaseModel):
             nn.Linear(in_features=1024, out_features=(in_features * dct_n)),
             nn.ReLU(),
         )
+
+        self.norm_1 = nn.LayerNorm(512)
+        self.norm_2 = nn.LayerNorm(512)
+        self.norm_3 = nn.LayerNorm(512)
 
         print(in_features * kernel_size)
 
@@ -784,8 +788,15 @@ class MultiHeadStackedModel(BaseModel):
 
         mh_attn_out, weights = self.multihead_attn(query_tmp, key_tmp, value_tmp)
 
-        # mh2_query_tmp = self.neural_net(mh_attn_out)
-        # mh2_attn_out, weights = self.multihead_attn_layer2(mh2_query_tmp, key_tmp, value_tmp)
+        mh_attn_out_norm = self.norm_1(mh_attn_out)
+
+        mh2_query_tmp = self.neural_net(mh_attn_out_norm)
+
+        mh2_query_tmp_norm = self.norm_2(mh2_query_tmp + mh_attn_out_norm)
+
+        mh2_attn_out, weights = self.multihead_attn_layer2(mh2_query_tmp_norm, key_tmp, value_tmp)
+
+        mh2_attn_out_norm = self.norm_3(mh2_attn_out + mh2_query_tmp_norm)
 
         af_ff_out = self.rev_ff_nn(mh_attn_out).swapaxes(0,1).reshape(batch_size, -1, dct_n)
 
