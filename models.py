@@ -16,7 +16,7 @@ from model import GCN, util
 def create_model(config):
     # This is a helper function that can be useful if you have several model definitions that you want to
     # choose from via the command line. For now, we just return the Dummy model.
-    return CustomTransformer(config)
+    return CustomTransformerWithDct(config)
 
 
 class BaseModel(nn.Module):
@@ -817,6 +817,130 @@ class MultiHeadStackedModel(BaseModel):
         return model_out
 
 
+
+    def backward(self, batch: AMASSBatch, model_out):
+        """
+        The backward pass.
+        :param batch: The same batch of data that was passed into the forward pass.
+        :param model_out: Whatever the forward pass returned.
+        :return: The loss values for book-keeping, as well as the targets for convenience.
+        """
+        predictions = model_out['predictions']
+        targets = batch.poses[:, -24:]
+
+        total_loss = mse(predictions, targets)
+
+        # If you have more than just one loss, just add them to this dict and they will automatically be logged.
+        loss_vals = {'total_loss': total_loss.cpu().item()}
+
+        if self.training:
+            # We only want to do backpropagation in training mode, as this function might also be called when evaluating
+            # the model on the validation set.
+            total_loss.backward()
+
+        return loss_vals, targets
+
+
+
+class CustomTransformerWithDct(BaseModel):
+
+    def __init__(self, config):
+        super(CustomTransformerWithDct, self).__init__(config)
+
+        print(config)
+        in_features = 135
+        kernel_size = 10  # M
+        dct_n = 12
+        d_model = dct_n * in_features
+        self.output_n = 24
+
+
+        self.kernel_size = kernel_size
+        self.d_model = d_model
+        self.dct_n = dct_n
+
+        self.transformer = torch.nn.Transformer(d_model=1620,
+                                                nhead=12,
+                                                num_encoder_layers=6,
+                                                num_decoder_layers=6,
+                                                dim_feedforward=512,
+                                                dropout=0.1,
+                                                activation='relu',
+                                                custom_encoder=None,
+                                                custom_decoder=None)
+
+        self.tgt_mask = self.transformer.generate_square_subsequent_mask(self.output_n).cuda()
+
+    def create_model(self):
+        pass
+
+    def forward(self, batch: AMASSBatch):
+        """
+        The forward pass.
+        :param batch: Current batch of data.
+        :return: Each forward pass must return a dictionary with keys {'seed', 'predictions'}.
+        """
+
+        model_out = {'seed': batch.poses[:, :self.config.seed_seq_len],
+                     'predictions': None}
+        bs = batch.batch_size
+        src = batch.poses
+        output_n = 24  # number of output frames T
+        input_n = 120  # number of input frames N
+
+
+        dct_n = self.dct_n
+        src = src # [bs,in_n,dim]
+        src_tmp = src.clone()
+
+        dct_m, idct_m = util.get_dct_matrix(self.kernel_size + output_n)
+        dct_m = torch.from_numpy(dct_m).float().cuda()
+        idct_m = torch.from_numpy(idct_m).float().cuda()
+
+        vn = src.shape[1] - self.kernel_size - output_n + 1
+
+        vl = self.kernel_size + output_n
+
+        idx = np.expand_dims(np.arange(vl), axis=0) + \
+              np.expand_dims(np.arange(vn), axis=1)
+
+        src_value_tmp = src_tmp[:, idx].clone().reshape(
+            [bs * vn, vl, -1])
+
+        src_value_tmp = torch.matmul(dct_m[:dct_n].unsqueeze(dim=0), src_value_tmp).reshape(
+            [bs, vn, dct_n, -1]).transpose(2, 3).reshape(
+            [bs, vn, -1])  # 
+
+        tr_input_size = vn - output_n
+
+
+        if src.shape[1] == 120 or not self.training:
+            # initialized the input of the decoder with sos_idx (start of sentence token idx)
+            src_enc = src_value_tmp[:, :tr_input_size, :].clone().transpose(0,1)
+            encoder_output = self.transformer.encoder(src_enc)
+            output = src_value_tmp[:, -1:, :].clone().cuda().transpose(0,1)
+            for t in range(1, output_n):
+                output = output[:t]
+                tgt_mask_t = self.tgt_mask[:t,:t]
+                decoder_output = self.transformer.decoder(tgt=output,
+                                         memory=encoder_output,
+                                         tgt_mask=tgt_mask_t).cuda()
+                output = torch.cat([output, decoder_output], dim=0)
+
+            last_frame = torch.matmul(idct_m[:, :dct_n].unsqueeze(dim=0), output.transpose(0,1)[:, -1:, :].reshape([bs, 1, dct_n, -1]).squeeze())
+
+            model_out['predictions'] = last_frame[:,-output_n:,:]
+            return model_out
+
+        src_transformer = src_value_tmp[:, :tr_input_size, :].clone().transpose(0,1)
+        tgt_transformer = src_value_tmp[:, -output_n:, :].clone().transpose(0,1)
+
+        output = self.transformer(src_transformer, tgt_transformer, tgt_mask=self.tgt_mask).cuda()
+
+        last_frame = torch.matmul(idct_m[:, :dct_n].unsqueeze(dim=0), output.transpose(0,1)[:, -1:, :].reshape([bs, 1, dct_n, -1]).squeeze())
+
+        model_out['predictions'] = last_frame[:,-output_n:,:]
+        return model_out
 
     def backward(self, batch: AMASSBatch, model_out):
         """
