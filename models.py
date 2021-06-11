@@ -314,6 +314,8 @@ class CustomTransformer(BaseModel):
                                                 custom_decoder=None)
 
         self.tgt_mask = self.transformer.generate_square_subsequent_mask(self.output_n).cuda()
+        #self.pos_emb = torch.FloatTensor(list(range(0, 144)))
+        #print(self.pose_emb)
 
     def create_model(self):
         pass
@@ -332,29 +334,28 @@ class CustomTransformer(BaseModel):
         output_n = 24  # number of output frames T
         input_n = 120  # number of input frames N
 
-        if src.shape[1] == 120 or not self.training:
-            # initialized the input of the decoder with sos_idx (start of sentence token idx)
-            src_encoder = src[:, :120].transpose(0,1)
-            encoder_output = self.transformer.encoder(src_encoder)
-            output = src[:, -1:, :].clone().cuda().transpose(0,1)
-            for t in range(1, output_n):
-                output = output[:t]
-                tgt_mask_t = self.tgt_mask[:t,:t]
-                decoder_output = self.transformer.decoder(tgt=output,
-                                         memory=encoder_output,
-                                         tgt_mask=tgt_mask_t).cuda()
-                output = torch.cat([output, decoder_output], dim=0)
-            model_out['predictions'] = output.transpose(0, 1)[:, -24:]
-            return model_out
-
-        src_tmp = src.clone()  # torch.Size([16, 144, 135])
-        src_transformer = src_tmp[:, :input_n, :].clone().transpose(0,1)  # torch.Size([16, 120, 135])
-        tgt_transformer = src_tmp[:, -output_n:, :].clone().transpose(0,1) # torch.Size([16, 34, 135])
-
-        output = self.transformer(src_transformer, tgt_transformer, tgt_mask=self.tgt_mask).cuda()
-
-        model_out['predictions'] = output.transpose(0,1)
+        # initialized the input of the decoder with sos_idx (start of sentence token idx)
+        src_encoder = src[:, :120].transpose(0,1)
+        #src_encoder = torch.cat([src_encoder, self.pos_emb[:120]], dim=2)
+        encoder_output = self.transformer.encoder(src_encoder)
+        output = src[:, -1:, :].clone().cuda().transpose(0,1)
+        for t in range(1, output_n+1):
+            tgt_mask_t = self.tgt_mask[:t,:t]
+            decoder_output = self.transformer.decoder(tgt=output,
+                                     memory=encoder_output,
+                                     tgt_mask=tgt_mask_t).cuda()
+            output = torch.cat([output, decoder_output[-1:]], dim=0)
+        model_out['predictions'] = output.transpose(0, 1)[:, -24:]
         return model_out
+
+        #src_tmp = src.clone()  # torch.Size([16, 144, 135])
+        #src_transformer = src_tmp[:, :input_n, :].clone().transpose(0,1)  # torch.Size([16, 120, 135])
+        #tgt_transformer = src_tmp[:, -output_n:, :].clone().transpose(0,1) # torch.Size([16, 34, 135])
+
+        #output = self.transformer(src_transformer, tgt_transformer, tgt_mask=self.tgt_mask).cuda()
+
+        #model_out['predictions'] = output.transpose(0,1)
+        #return model_out
 
     def backward(self, batch: AMASSBatch, model_out):
         """
@@ -920,12 +921,11 @@ class CustomTransformerWithDct(BaseModel):
             encoder_output = self.transformer.encoder(src_enc)
             output = src_value_tmp[:, -1:, :].clone().cuda().transpose(0,1)
             for t in range(1, output_n):
-                output = output[:t]
                 tgt_mask_t = self.tgt_mask[:t,:t]
                 decoder_output = self.transformer.decoder(tgt=output,
                                          memory=encoder_output,
                                          tgt_mask=tgt_mask_t).cuda()
-                output = torch.cat([output, decoder_output], dim=0)
+                output = torch.cat([output, decoder_output[-1:]], dim=0)
 
             last_frame = torch.matmul(idct_m[:, :dct_n].unsqueeze(dim=0), output.transpose(0,1)[:, -1:, :].reshape([bs, 1, dct_n, -1]).squeeze())
 
