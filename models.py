@@ -137,14 +137,14 @@ class MultiHeadStackedModel(BaseModel):
         self.ff_nn = nn.Sequential(
             nn.Linear(in_features=(in_features * dct_n), out_features=256),
             nn.ReLU(),
-            nn.Linear(in_features=256, out_features=d_model),
+            nn.Linear(in_features=1024, out_features=d_model),
             nn.ReLU(),
         )
 
         self.rev_ff_nn = nn.Sequential(
             nn.Linear(in_features=d_model, out_features=256),
             nn.ReLU(),
-            nn.Linear(in_features=256, out_features=(in_features * dct_n)),
+            nn.Linear(in_features=1024, out_features=(in_features * dct_n)),
             nn.ReLU(),
         )
 
