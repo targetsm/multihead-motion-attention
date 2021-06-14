@@ -135,14 +135,14 @@ class MultiHeadStackedModel(BaseModel):
         self.multihead_attn = nn.MultiheadAttention(self.d_model, 16).to('cuda:0')
 
         self.ff_nn = nn.Sequential(
-            nn.Linear(in_features=(in_features * dct_n), out_features=256),
+            nn.Linear(in_features=(in_features * dct_n), out_features=1024),
             nn.ReLU(),
             nn.Linear(in_features=1024, out_features=d_model),
             nn.ReLU(),
         )
 
         self.rev_ff_nn = nn.Sequential(
-            nn.Linear(in_features=d_model, out_features=256),
+            nn.Linear(in_features=d_model, out_features=1024),
             nn.ReLU(),
             nn.Linear(in_features=1024, out_features=(in_features * dct_n)),
             nn.ReLU(),
