@@ -106,9 +106,9 @@ class MultiHeadStackedModel(BaseModel):
         print(config)
         in_features = 135
         kernel_size = 10  # M
-        num_stage = 2
-        dct_n = 34
-        d_model = 512
+        num_stage = 4
+        dct_n = 24
+        d_model = 128
 
         self.kernel_size = kernel_size
         self.d_model = d_model
@@ -128,23 +128,23 @@ class MultiHeadStackedModel(BaseModel):
                                              bias=False),
                                    nn.ReLU())
 
-        self.gcn = GCN.GCN(input_feature=(dct_n) * 2, hidden_feature=d_model, p_dropout=0.3,
+        self.gcn = GCN.GCN(input_feature=(dct_n) * 2, hidden_feature=512, p_dropout=0.3,
                            num_stage=num_stage,
                            node_n=in_features)
 
         self.multihead_attn = nn.MultiheadAttention(self.d_model, 16).to('cuda:0')
 
         self.ff_nn = nn.Sequential(
-            nn.Linear(in_features=(in_features * dct_n), out_features=1024),
+            nn.Linear(in_features=(in_features * dct_n), out_features=256),
             nn.ReLU(),
-            nn.Linear(in_features=1024, out_features=d_model),
+            nn.Linear(in_features=256, out_features=d_model),
             nn.ReLU(),
         )
 
         self.rev_ff_nn = nn.Sequential(
-            nn.Linear(in_features=d_model, out_features=1024),
+            nn.Linear(in_features=d_model, out_features=256),
             nn.ReLU(),
-            nn.Linear(in_features=1024, out_features=(in_features * dct_n)),
+            nn.Linear(in_features=256, out_features=(in_features * dct_n)),
             nn.ReLU(),
         )
 
@@ -192,14 +192,14 @@ class MultiHeadStackedModel(BaseModel):
         idx = list(range(-self.kernel_size, 0, 1)) + [-1] * output_n
         outputs = []
 
-        key_tmp = self.convK(src_key_tmp / 1000.0).swapaxes(0,1).swapaxes(0,2)
+        key_tmp = self.convK(src_key_tmp / 1000.0).transpose(0,1).transpose(0,2)
 
-        query_tmp = self.convQ(src_query_tmp / 1000.0).swapaxes(0,1).swapaxes(0,2)
-        value_tmp = self.ff_nn(src_value_tmp).swapaxes(1,2).swapaxes(0,1).swapaxes(0,2)
+        query_tmp = self.convQ(src_query_tmp / 1000.0).transpose(0,1).transpose(0,2)
+        value_tmp = self.ff_nn(src_value_tmp).transpose(1,2).transpose(0,1).transpose(0,2)
 
         mh_attn_out, weights = self.multihead_attn(query_tmp, key_tmp, value_tmp)
 
-        af_ff_out = self.rev_ff_nn(mh_attn_out).swapaxes(0,1).reshape(batch_size, -1, dct_n)
+        af_ff_out = self.rev_ff_nn(mh_attn_out).transpose(0,1).reshape(batch_size, -1, dct_n)
 
         input_gcn = src_tmp[:, idx]  # shape:[16, 34, 135]
 
