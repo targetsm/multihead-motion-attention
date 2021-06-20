@@ -6,7 +6,7 @@ We define in this git a model implementing multihead attention for motion predic
 
 To run the model, simply run the following commands, inside the main project directory:
 
-```python3 train.py --n_epochs=20000```
+```python3 train.py --n_epochs=20000 --bs_train=256```
 
 To evaluate the model, run
 
