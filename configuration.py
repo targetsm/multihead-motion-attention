@@ -58,7 +58,7 @@ class Configuration(object):
         parser = argparse.ArgumentParser()
 
         # General.
-        parser.add_argument('--data_workers', type=int, default=4, help='Number of parallel threads for data loading.')
+        parser.add_argument('--data_workers', type=int, default=1, help='Number of parallel threads for data loading.')
         parser.add_argument('--print_every', type=int, default=200, help='Print stats to console every so many iters.')
         parser.add_argument('--eval_every', type=int, default=400, help='Evaluate validation set every so many iters.')
         parser.add_argument('--tag', default='', help='A custom tag for this experiment.')

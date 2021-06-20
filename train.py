@@ -113,7 +113,7 @@ def main(config):
     stats = np.load(os.path.join(C.DATA_DIR, "training", "stats.npz"), allow_pickle=True)['stats'].tolist()
 
     # Set the pose size in the config as models use this later.
-    setattr(config, 'pose_size', 135)
+    setattr(config, 'pose_size', 135) # n_joints * 3 * 3
 
     # Create the model.
     net = create_model(config)
@@ -147,7 +147,7 @@ def main(config):
     writer = SummaryWriter(os.path.join(model_dir, 'logs'))
 
     # Define the optimizer.
-    optimizer = optim.SGD(net.parameters(), lr=config.lr)
+    optimizer = optim.Adam(net.parameters(), lr=config.lr)
 
     # Training loop.
     global_step = 0
