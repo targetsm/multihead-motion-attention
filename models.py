@@ -246,6 +246,9 @@ class MultiHeadStackedModel(BaseModel):
 
 
 class MultiHeadAttModel(BaseModel):
+    """
+    Code based on https://github.com/wei-mao-2019/HisRepItself
+    """
 
     def __init__(self, config):
         super(MultiHeadAttModel, self).__init__(config)
