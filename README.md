@@ -1,4 +1,4 @@
-# Multi-Head attention for motion prediction
+# Multi Head Attention for Motion Prediction
 
 We define in this git a model implementing multihead attention for motion prediction.
 Take a loot at our [project report](multihead_attention_report.pdf).
